@@ -32,22 +32,20 @@ find_package(Threads REQUIRED)
 
 # Regenerate parser. The nanocurrency/protocol repository must be
 # added as a submodule when this flag is active.
-if (NANOCAP_GENERATE_PARSER)
+execute_process (
+	COMMAND
+	"kaitai-struct-compiler" "${CMAKE_SOURCE_DIR}/protocol/reference/protocol.ksy" "--cpp-namespace" "nano::protocol" "--outdir" "${CMAKE_SOURCE_DIR}/src" "-t" "cpp_stl"
+	ERROR_FILE "${CMAKE_SOURCE_DIR}/gen.err"
+	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
 
-	execute_process (
-		COMMAND
-		"kaitai-struct-compiler" "${CMAKE_SOURCE_DIR}/protocol/reference/protocol.ksy" "--cpp-namespace" "nano::protocol" "--outdir" "${CMAKE_SOURCE_DIR}/src" "-t" "cpp_stl"
-		ERROR_FILE "${CMAKE_SOURCE_DIR}/gen.err"
-		WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-	)
+execute_process (
+	COMMAND
+	"kaitai-struct-compiler" "${CMAKE_SOURCE_DIR}/protocol/reference/protocol.ksy" "--outdir" "${CMAKE_SOURCE_DIR}/public" "-t" "javascript"
+	ERROR_FILE "${CMAKE_SOURCE_DIR}/gen.err"
+	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
 
-	execute_process (
-		COMMAND
-		"kaitai-struct-compiler" "${CMAKE_SOURCE_DIR}/protocol/reference/protocol.ksy" "--outdir" "${CMAKE_SOURCE_DIR}/public" "-t" "javascript"
-		ERROR_FILE "${CMAKE_SOURCE_DIR}/gen.err"
-		WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-	)
-endif ()
 
 # Blake2
 file(GLOB_RECURSE blake2_sources
