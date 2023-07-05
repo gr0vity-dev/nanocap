@@ -900,67 +900,16 @@ std::error_code nanocap::db::put(nano::protocol::nano_t::msg_publish_t& msg, nan
 }
 
 std::error_code nanocap::db::put(nano::protocol::nano_t::msg_asc_pull_ack_t& msg, nanocap::nano_packet& info)
-{
+{	
     std::error_code ec;
 	int64_t packet_id = next_id.fetch_add(1);
-    std::lock_guard<std::mutex> guard (db_mutex);
-    
+    std::lock_guard<std::mutex> guard (db_mutex);    
     bind_header_fields(stmt_packet.get(), msg, packet_id);
-    bind_packet_fields(stmt_packet.get(), info);    
-    
-    stmt_msg_asc_pull->bind(":id", packet_id);
-	stmt_msg_asc_pull->bind(":type", "asc_pull_ack");
-
-    // Base
-    if (msg.base())
-    {
-        // bind base fields
-        stmt_msg_asc_pull->bind(":base_type", msg.base()->type());
-        stmt_msg_asc_pull->bind(":id", static_cast<long long int>(msg.base()->id()));
-    }
-
-    // Payload
-    if (msg.payload())
-    {
-        // Account info
-        if (msg.payload()->account_info())
-        {
-            stmt_msg_asc_pull->bind(":account", msg.payload()->account_info()->account());
-            stmt_msg_asc_pull->bind(":account_open", msg.payload()->account_info()->account_open());
-            stmt_msg_asc_pull->bind(":account_head", msg.payload()->account_info()->account_head());
-            stmt_msg_asc_pull->bind(":block_count", static_cast<long long int>(msg.payload()->account_info()->block_count()));
-            stmt_msg_asc_pull->bind(":conf_frontier", msg.payload()->account_info()->conf_frontier());
-            stmt_msg_asc_pull->bind(":conf_height", static_cast<long long int>(msg.payload()->account_info()->conf_height()));
-        }
-        // Blocks
-        else if (msg.payload()->blocks())
-        {         
-            for (auto& entry : *msg.payload()->blocks()->entry())
-            {                
-                // handle block entries here				
-                stmt_msg_asc_pull->bind(":block_type", entry->block_type());				
-            }
-        }
-        else
-        {
-            std::cout << "msg_asc_pull_ack_t with neither account_info nor blocks";
-        }
-    }
-    else
-    {
-        std::cout << "msg_asc_pull_ack_t no payload" ;
-    }
-
-    // Execute the statement
-    stmt_msg_asc_pull->exec();
-	stmt_msg_asc_pull->reset();
-
+    bind_packet_fields(stmt_packet.get(), info);
 	stmt_packet->bind(":content_id", packet_id);
-	stmt_packet->bind(":content_table", "msg_asc_pull");
-
+	
 	auto rows = stmt_packet->exec();
 	assert (rows == 1);
-
 	// Prepare for next use
 	stmt_packet->reset();
 
@@ -972,24 +921,13 @@ std::error_code nanocap::db::put(nano::protocol::nano_t::msg_asc_pull_req_t& msg
 {
     std::error_code ec;
 	int64_t packet_id = next_id.fetch_add(1);
-    std::lock_guard<std::mutex> guard (db_mutex);
-    
+    std::lock_guard<std::mutex> guard (db_mutex);    
     bind_header_fields(stmt_packet.get(), msg, packet_id);
-    bind_packet_fields(stmt_packet.get(), info);    
-    
-    stmt_msg_asc_pull->bind(":id", packet_id);
-	stmt_msg_asc_pull->bind(":type", "asc_pull_req");    
-
-    // Execute the statement
-    stmt_msg_asc_pull->exec();
-	stmt_msg_asc_pull->reset();
-
+    bind_packet_fields(stmt_packet.get(), info);
 	stmt_packet->bind(":content_id", packet_id);
-	stmt_packet->bind(":content_table", "msg_asc_pull");
-
+	
 	auto rows = stmt_packet->exec();
 	assert (rows == 1);
-
 	// Prepare for next use
 	stmt_packet->reset();
 
