@@ -175,6 +175,21 @@ nanocap::db::db(nanocap::app & app) : app (app)
 					"content_id INTEGER NOT NULL, content_table TEXT NOT NULL"
 				 ")"
 				 );
+	sqlite->exec(
+				"CREATE TABLE IF NOT EXISTS msg_asc_pull "
+				"( "
+					"id INTEGER NOT NULL, "
+					"packet_id INTEGER NOT NULL, "
+					"type TEXT NOT NULL, "
+					"base_type INTEGER NOT NULL, "
+					"account_info_start TEXT, "
+					"account_info_start_type INTEGER, " 
+					"block_type TEXT, "
+					"hash TEXT, "
+					"PRIMARY KEY(id, packet_id)"
+				")"
+				);
+
 
 	// Insert a new run. This increments the id multiplier.
 	sqlite->exec("INSERT INTO runs DEFAULT VALUES");
@@ -225,6 +240,10 @@ nanocap::db::db(nanocap::app & app) : app (app)
 																				"INSERT INTO bulk_pull_account_response_entry VALUES (:id, :bulk_pull_account_request_id, :hash, :amount, :source)");
 
 	stmt_bulk_push_entry = std::make_unique<SQLite::Statement>(*sqlite, "INSERT INTO bulk_push_entry VALUES (:id, :packet_id, :content_id, :content_table)");
+
+	stmt_msg_asc_pull = std::make_unique<SQLite::Statement>(*sqlite,
+    		"INSERT INTO msg_asc_pull VALUES (:id, :packet_id, :type, :base_type, :account_info_start, :account_info_start_type, :block_type, :hash)");
+
 
 	// Start transaction; this will be periodically committed
 	primary_tx = std::make_unique<SQLite::Transaction> (*sqlite);
@@ -734,22 +753,10 @@ std::error_code nanocap::db::put(nano::protocol::nano_t::msg_confirm_ack_t& msg,
 	std::lock_guard<std::mutex> guard (db_mutex);
 	
 	bind_header_fields(stmt_packet.get(), msg, packet_id);
-	bind_packet_fields(stmt_packet.get(), info);
+	bind_packet_fields(stmt_packet.get(), info);	
 	
-	// Regular vote
-	if (msg.block())
-	{
-		int64_t block_content_id = next_id.fetch_add(1);
-		std::string content_table;
-		put_block(msg.block(), block_content_id, packet_id, content_table);
-		
-		stmt_vote->bind(":content_id", block_content_id);
-		stmt_vote->bind(":content_table", content_table);
-		stmt_vote->bind(":vote_count", 1);
-		stmt_vote->bind(":vbh", 0);
-	}
 	// Vote-by-hash
-	else if (msg.votebyhash() && msg.votebyhash()->hashes() && !msg.votebyhash()->hashes()->empty())
+	if (msg.votebyhash() && msg.votebyhash()->hashes() && !msg.votebyhash()->hashes()->empty())
 	{
 		stmt_vote->bind(":vbh", 1);
 		std::ostringstream hashes;
@@ -779,7 +786,7 @@ std::error_code nanocap::db::put(nano::protocol::nano_t::msg_confirm_ack_t& msg,
 	{
 		stmt_vote->bind(":account", pub_to_account(msg.common()->account()));
 		stmt_vote->bind(":signature", to_hex(msg.common()->signature()));
-		stmt_vote->bind(":sequence", static_cast<int64_t>(msg.common()->sequence()));
+		stmt_vote->bind(":sequence", static_cast<int64_t>(msg.common()->timestamp_and_vote_duration()));
 	}
 	else
 	{
@@ -891,6 +898,107 @@ std::error_code nanocap::db::put(nano::protocol::nano_t::msg_publish_t& msg, nan
 
 	return ec;
 }
+
+std::error_code nanocap::db::put(nano::protocol::nano_t::msg_asc_pull_ack_t& msg, nanocap::nano_packet& info)
+{
+    std::error_code ec;
+	int64_t packet_id = next_id.fetch_add(1);
+    std::lock_guard<std::mutex> guard (db_mutex);
+    
+    bind_header_fields(stmt_packet.get(), msg, packet_id);
+    bind_packet_fields(stmt_packet.get(), info);    
+    
+    stmt_msg_asc_pull->bind(":id", packet_id);
+	stmt_msg_asc_pull->bind(":type", "asc_pull_ack");
+
+    // Base
+    if (msg.base())
+    {
+        // bind base fields
+        stmt_msg_asc_pull->bind(":base_type", msg.base()->type());
+        stmt_msg_asc_pull->bind(":id", static_cast<long long int>(msg.base()->id()));
+    }
+
+    // Payload
+    if (msg.payload())
+    {
+        // Account info
+        if (msg.payload()->account_info())
+        {
+            stmt_msg_asc_pull->bind(":account", msg.payload()->account_info()->account());
+            stmt_msg_asc_pull->bind(":account_open", msg.payload()->account_info()->account_open());
+            stmt_msg_asc_pull->bind(":account_head", msg.payload()->account_info()->account_head());
+            stmt_msg_asc_pull->bind(":block_count", static_cast<long long int>(msg.payload()->account_info()->block_count()));
+            stmt_msg_asc_pull->bind(":conf_frontier", msg.payload()->account_info()->conf_frontier());
+            stmt_msg_asc_pull->bind(":conf_height", static_cast<long long int>(msg.payload()->account_info()->conf_height()));
+        }
+        // Blocks
+        else if (msg.payload()->blocks())
+        {         
+            for (auto& entry : *msg.payload()->blocks()->entry())
+            {                
+                // handle block entries here				
+                stmt_msg_asc_pull->bind(":block_type", entry->block_type());				
+            }
+        }
+        else
+        {
+            std::cout << "msg_asc_pull_ack_t with neither account_info nor blocks";
+        }
+    }
+    else
+    {
+        std::cout << "msg_asc_pull_ack_t no payload" ;
+    }
+
+    // Execute the statement
+    stmt_msg_asc_pull->exec();
+	stmt_msg_asc_pull->reset();
+
+	stmt_packet->bind(":content_id", packet_id);
+	stmt_packet->bind(":content_table", "msg_asc_pull");
+
+	auto rows = stmt_packet->exec();
+	assert (rows == 1);
+
+	// Prepare for next use
+	stmt_packet->reset();
+
+    // Continue as per your existing structure
+    return ec;
+}
+
+std::error_code nanocap::db::put(nano::protocol::nano_t::msg_asc_pull_req_t& msg, nanocap::nano_packet& info)
+{
+    std::error_code ec;
+	int64_t packet_id = next_id.fetch_add(1);
+    std::lock_guard<std::mutex> guard (db_mutex);
+    
+    bind_header_fields(stmt_packet.get(), msg, packet_id);
+    bind_packet_fields(stmt_packet.get(), info);    
+    
+    stmt_msg_asc_pull->bind(":id", packet_id);
+	stmt_msg_asc_pull->bind(":type", "asc_pull_req");    
+
+    // Execute the statement
+    stmt_msg_asc_pull->exec();
+	stmt_msg_asc_pull->reset();
+
+	stmt_packet->bind(":content_id", packet_id);
+	stmt_packet->bind(":content_table", "msg_asc_pull");
+
+	auto rows = stmt_packet->exec();
+	assert (rows == 1);
+
+	// Prepare for next use
+	stmt_packet->reset();
+
+    // Continue as per your existing structure
+    return ec;
+}
+
+
+
 
 // Must be called with db_mutex locked
 std::error_code nanocap::db::put_block(nano::protocol::nano_t::block_selector_t* block_selector,
